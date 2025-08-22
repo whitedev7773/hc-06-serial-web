@@ -36,9 +36,13 @@
 
 			logToSerial('블루투스 장치를 찾는 중...');
 			bluetoothDevice = await navigator.bluetooth.requestDevice({
-				filters: [{ services: [SPP_SERVICE_UUID] }],
+				filters: [],
 				optionalServices: ['generic_access']
 			});
+			// bluetoothDevice = await navigator.bluetooth.requestDevice({
+			// 	filters: [{ services: [SPP_SERVICE_UUID] }],
+			// 	optionalServices: ['generic_access']
+			// });
 
 			if (!bluetoothDevice) {
 				logToSerial('장치가 선택되지 않았습니다.');
