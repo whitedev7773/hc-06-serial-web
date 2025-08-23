@@ -186,19 +186,29 @@
 	</header>
 
 	<main>
-		<!-- Connection Section -->
-		<section class="card">
-			<h2>연결</h2>
-			<div class="connection-status">
-				상태:
-				<span class={isConnected ? 'connected' : 'disconnected'}>
-					{isConnected ? `${deviceName}에 연결됨` : '연결 끊김'}
-				</span>
-			</div>
-			<button class="button" on:click={onConnectClick}>
-				{isConnected ? '연결 끊기' : 'COM 포트에 연결'}
-			</button>
-		</section>
+		<div class="top-section">
+			<!-- Connection Section -->
+			<section class="card">
+				<h2>연결</h2>
+				<div class="connection-status">
+					상태:
+					<span class={isConnected ? 'connected' : 'disconnected'}>
+						{isConnected ? `${deviceName}에 연결됨` : '연결 끊김'}
+					</span>
+				</div>
+				<button class="button" on:click={onConnectClick}>
+					{isConnected ? '연결 끊기' : 'COM 포트에 연결'}
+				</button>
+			</section>
+
+			<!-- Serial Monitor Section -->
+			<section class="card">
+				<h2>시리얼 모니터</h2>
+				<p>HC-06 모듈에서 수신된 데이터를 표시합니다.</p>
+				<textarea readonly bind:value={serialLog} placeholder="데이터 수신 대기 중..."></textarea>
+				<button class="button" on:click={() => (serialLog = '')}>로그 지우기</button>
+			</section>
+		</div>
 
 		<!-- Input Status Section -->
 		<section class="card">
@@ -236,14 +246,6 @@
 					</li>
 				{/each}
 			</ul>
-		</section>
-
-		<!-- Serial Monitor Section -->
-		<section class="card">
-			<h2>시리얼 모니터</h2>
-			<p>HC-06 모듈에서 수신된 데이터를 표시합니다.</p>
-			<textarea readonly bind:value={serialLog} placeholder="데이터 수신 대기 중..."></textarea>
-			<button class="button" on:click={() => (serialLog = '')}>로그 지우기</button>
 		</section>
 
 		<!-- Instructions Section -->
@@ -290,7 +292,7 @@
 	}
 
 	.container {
-		max-width: 800px;
+		max-width: 1200px;
 		margin: 2rem auto;
 		padding: 0 1rem;
 		font-family:
@@ -311,6 +313,19 @@
 		box-shadow: var(--box-shadow);
 		padding: 1.5rem;
 		margin-bottom: 1.5rem;
+	}
+
+	.top-section {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1.5rem;
+		margin-bottom: 1.5rem;
+	}
+
+	.top-section > .card {
+		flex: 1;
+		min-width: 350px;
+		margin-bottom: 0;
 	}
 
 	.connection-status {
@@ -428,5 +443,11 @@
 
 	ol li {
 		margin-bottom: 0.5rem;
+	}
+
+	@media (max-width: 768px) {
+		.top-section {
+			flex-direction: column;
+		}
 	}
 </style>
