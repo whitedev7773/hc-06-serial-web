@@ -1,4 +1,11 @@
 <script lang="ts">
+	// Web Serial API related state
+	let port: SerialPort | null = null;
+	let reader: ReadableStreamDefaultReader | null = null;
+	let writer: WritableStreamDefaultWriter | null = null;
+	let keepReading = false;
+
+	// Common state
 	let isConnected = false;
 	let deviceName = '';
 	let keyInput = '';
@@ -13,132 +20,126 @@
 	let pressedKey = '';
 	let lastSent: { key: string; value: string } | null = null;
 
-	let bluetoothDevice: BluetoothDevice | null = null;
-	let txCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
-	let rxCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
-
-	const SPP_SERVICE_UUID = 0x1101;
-
 	async function onConnectClick() {
 		if (isConnected) {
-			disconnect();
+			await disconnect();
 		} else {
-			connect();
+			await connect();
 		}
 	}
 
 	async function connect() {
 		try {
-			if (!navigator.bluetooth) {
-				alert('이 브라우저에서는 Web Bluetooth API를 사용할 수 없습니다!');
+			if (!('serial' in navigator)) {
+				alert('이 브라우저에서는 Web Serial API를 사용할 수 없습니다!');
 				return;
 			}
+			logToSerial('연결할 COM 포트를 선택하세요...');
+			port = await navigator.serial.requestPort();
+			await port.open({ baudRate: 9600 });
+			logToSerial('포트가 성공적으로 열렸습니다.');
 
-			logToSerial('블루투스 장치를 찾는 중...');
-			bluetoothDevice = await navigator.bluetooth.requestDevice({
-				filters: [],
-				optionalServices: ['generic_access']
-			});
-			// bluetoothDevice = await navigator.bluetooth.requestDevice({
-			// 	filters: [{ services: [SPP_SERVICE_UUID] }],
-			// 	optionalServices: ['generic_access']
-			// });
+			isConnected = true;
+			deviceName = `COM Port`; // Generic name for serial port
 
-			if (!bluetoothDevice) {
-				logToSerial('장치가 선택되지 않았습니다.');
+			if (!port.writable || !port.readable) {
+				logToSerial('포트에 쓸 수 없거나 읽을 수 없습니다.');
 				return;
 			}
-
-			deviceName = bluetoothDevice.name || `ID: ${bluetoothDevice.id}`;
-			logToSerial(`${deviceName}에 연결하는 중...`);
-			bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
-
-			const server = await bluetoothDevice.gatt?.connect();
-			logToSerial('GATT 서버에 연결되었습니다.');
-
-			const service = await server?.getPrimaryService(SPP_SERVICE_UUID);
-			logToSerial('SPP 서비스를 찾았습니다.');
-
-			const characteristics = await service?.getCharacteristics();
-			logToSerial(`${characteristics?.length}개의 특성을 찾았습니다.`);
-
-			if (characteristics?.length) {
-				const characteristic = characteristics[0];
-				txCharacteristic = characteristic;
-				rxCharacteristic = characteristic;
-
-				logToSerial('특성을 찾았습니다. 통신 준비 완료.');
-				isConnected = true;
-
-				rxCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
-				await rxCharacteristic.startNotifications();
-				logToSerial('데이터 수신을 시작합니다.');
-			}
+			keepReading = true;
+			writer = port.writable.getWriter();
+			readLoop(); // Start the reading loop
 		} catch (error) {
 			if (error instanceof Error) {
 				logToSerial(`오류: ${error.message}`);
-			} else {
-				logToSerial(`알 수 없는 오류: ${String(error)}`);
 			}
-			disconnect();
+			await disconnect();
 		}
 	}
 
-	function disconnect() {
-		if (bluetoothDevice) {
-			logToSerial('장치 연결을 해제하는 중...');
-			bluetoothDevice.removeEventListener('gattserverdisconnected', onDisconnected);
-			if (bluetoothDevice.gatt?.connected) {
-				bluetoothDevice.gatt.disconnect();
-			} else {
-				logToSerial('장치가 이미 연결 해제되었습니다.');
+	async function disconnect() {
+		keepReading = false;
+
+		if (reader) {
+			try {
+				await reader.cancel();
+			} catch (error) {
+				/* Ignore error */
 			}
+			// The lock is automatically released on cancel.
+			reader = null;
 		}
+
+		if (writer) {
+			try {
+				await writer.releaseLock();
+			} catch (error) {
+				/* Ignore error */
+			}
+			writer = null;
+		}
+
+		if (port) {
+			try {
+				await port.close();
+			} catch (error) {
+				/* Ignore error */
+			}
+			port = null;
+			logToSerial('포트가 닫혔습니다.');
+		}
+
 		resetState();
 	}
 
-	function onDisconnected() {
-		logToSerial('장치 연결이 끊어졌습니다.');
-		resetState();
+	async function readLoop() {
+		if (!port?.readable) return;
+		reader = port.readable.getReader();
+
+		try {
+			while (port.readable && keepReading) {
+				const { value, done } = await reader.read();
+				if (done) {
+					break;
+				}
+				const decoder = new TextDecoder('utf-8');
+				const receivedText = decoder.decode(value);
+				logToSerial(`수신: ${receivedText}`);
+			}
+		} catch (error) {
+			if (error instanceof Error && error.name !== 'AbortError') {
+				logToSerial(`읽기 오류: ${error.message}`);
+			}
+		} finally {
+			if (reader) reader.releaseLock();
+		}
 	}
 
 	function resetState() {
 		isConnected = false;
 		deviceName = '';
-		bluetoothDevice = null;
-		txCharacteristic = null;
-		rxCharacteristic = null;
-	}
-
-	function handleNotifications(event: Event) {
-		const target = event.target as BluetoothRemoteGATTCharacteristic;
-		const value = target.value;
-		if (value) {
-			const decoder = new TextDecoder('utf-8');
-			const receivedText = decoder.decode(value);
-			logToSerial(`수신: ${receivedText}`);
-		}
 	}
 
 	function logToSerial(message: string) {
 		const timestamp = new Date().toLocaleTimeString();
 		serialLog += `[${timestamp}] ${message}\n`;
+		// Auto-scroll textarea
+		const textarea = document.querySelector('textarea');
+		if (textarea) textarea.scrollTop = textarea.scrollHeight;
 	}
 
 	async function sendData(data: string) {
-		if (!txCharacteristic) {
-			logToSerial('데이터를 보낼 수 없습니다: 연결되지 않음.');
+		if (!writer) {
+			logToSerial('데이터를 보낼 수 없습니다: 포트가 열려있지 않음.');
 			return;
 		}
 		try {
 			const encoder = new TextEncoder();
-			await txCharacteristic.writeValue(encoder.encode(data));
+			await writer.write(encoder.encode(data));
 			logToSerial(`전송: ${data}`);
 		} catch (error) {
 			if (error instanceof Error) {
 				logToSerial(`전송 오류: ${error.message}`);
-			} else {
-				logToSerial(`알 수 없는 전송 오류: ${String(error)}`);
 			}
 		}
 	}
@@ -172,7 +173,7 @@
 	}
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window on:keydown={handleKeydown} on:beforeunload={disconnect} />
 
 <svelte:head>
 	<title>HC-06 웹 시리얼</title>
@@ -180,7 +181,7 @@
 
 <div class="container">
 	<header>
-		<h1>HC-06 웹 시리얼 인터페이스</h1>
+		<h1>HC-06 웹 시리얼 인터페이스 (Web Serial API)</h1>
 		<p>웹 기반으로 HC-06 블루투스 모듈과 통신하는 인터페이스입니다.</p>
 	</header>
 
@@ -195,7 +196,7 @@
 				</span>
 			</div>
 			<button class="button" on:click={onConnectClick}>
-				{isConnected ? '연결 끊기' : 'HC-06에 연결'}
+				{isConnected ? '연결 끊기' : 'COM 포트에 연결'}
 			</button>
 		</section>
 
@@ -250,21 +251,26 @@
 			<h2>사용 설명서</h2>
 			<ol>
 				<li>
-					<strong>HC-06 페어링:</strong> HC-06 모듈의 전원을 켜고, 컴퓨터의 시스템 블루투스 설정에서
-					기기와 페어링하세요.
+					<strong>HC-06 페어링:</strong> HC-06 모듈의 전원을 켜고, 컴퓨터의 **Windows 블루투스 설정**에서
+					기기와 먼저 페어링하세요.
 				</li>
 				<li>
-					<strong>연결:</strong> 'HC-06에 연결' 버튼을 클릭하세요. 브라우저 팝업이 나타나면 HC-06 장치(이름이
-					"HC-06" 또는 "JY-MCU" 등일 수 있음)를 선택하세요.
+					<strong>COM 포트 확인:</strong> Windows '장치 관리자'를 열고 '포트 (COM & LPT)' 섹션에서 HC-06에
+					할당된 COM 포트 번호(예: COM3, COM4)를 확인하세요. 'Standard Serial over Bluetooth link' 라고
+					표시될 수 있습니다.
 				</li>
 				<li>
-					<strong>키 매핑:</strong> 키 매핑을 추가하거나 수정하세요. 매핑된 키를 누르면 해당 값이 전송됩니다.
+					<strong>포트 연결:</strong> 'COM 포트에 연결' 버튼을 클릭하세요. 브라우저 팝업이 나타나면 위에서
+					확인한 COM 포트를 선택하고 연결하세요.
 				</li>
-				<li><strong>모니터링:</strong> HC-06에서 보낸 모든 데이터는 시리얼 모니터에 나타납니다.</li>
+				<li>
+					<strong>키 매핑 및 테스트:</strong> 키를 매핑하고 눌러서 데이터를 전송하거나, HC-06에서 오는
+					데이터를 모니터링하세요.
+				</li>
 			</ol>
 			<p class="note">
-				<strong>참고:</strong> 이 앱은 Web Bluetooth API를 사용하며, 호환되는 브라우저(Chrome, Edge,
-				Opera 등)와 보안 컨텍스트(HTTPS 또는 localhost)가 필요합니다.
+				<strong>참고:</strong> 이 앱은 Web Serial API를 사용하며, 호환되는 브라우저(Chrome, Edge, Opera
+				등)와 보안 컨텍스트(HTTPS 또는 localhost)가 필요합니다.
 			</p>
 		</section>
 	</main>
@@ -406,6 +412,7 @@
 		padding: 8px;
 		margin-bottom: 1rem;
 		font-family: 'Courier New', Courier, monospace;
+		scroll-behavior: smooth;
 	}
 
 	.note {
